@@ -15,9 +15,9 @@ func (s *SchemaRules) Get(data map[string]interface{}) bool {
 	return true
 }
 
-var schemaRules = map[string]func(o Node) error{}
+var schemaRules = map[string]func(o *Node) error{}
 
-func RegisterSchemaRule(name string, fn func(o Node) error) {
+func RegisterSchemaRule(name string, fn func(o *Node) error) {
 	schemaRules[name] = fn
 }
 
@@ -35,7 +35,7 @@ func (sc *Schema) Name() string {
 	return sc.name
 }
 
-func (sc *Schema) Validate(o Node) error {
+func (sc *Schema) Validate(o *Node) error {
 	for _, rl := range sc.rules {
 		if err := schemaRules[rl](o); err != nil {
 			return err
@@ -44,7 +44,7 @@ func (sc *Schema) Validate(o Node) error {
 	return nil
 }
 
-func MkSchema(o Node) (stru Identifiable, ok bool) {
+func MkSchema(o *Node) (stru Identifiable, ok bool) {
 	var n Name
 	if !o.Property(&n) {
 		return nil, false
@@ -54,7 +54,7 @@ func MkSchema(o Node) (stru Identifiable, ok bool) {
 		return nil, false
 	}
 	return &Schema{
-		id:    o.UUID(),
+		id:    o.ID(),
 		name:  string(n),
 		rules: []string(r),
 	}, true
@@ -62,7 +62,7 @@ func MkSchema(o Node) (stru Identifiable, ok bool) {
 
 type Validateable struct {
 	id string
-	Node
+	*Node
 	*Schema
 }
 
@@ -74,7 +74,7 @@ func (v *Validateable) Validate() error {
 	return v.Schema.Validate(v.Node)
 }
 
-func MkValidateable(o Node) (stru Identifiable, ok bool) {
+func MkValidateable(o *Node) (stru Identifiable, ok bool) {
 	rel := o.Relation("schema")
 	if rel == nil {
 		return nil, false
@@ -89,7 +89,7 @@ func MkValidateable(o Node) (stru Identifiable, ok bool) {
 	}
 
 	return &Validateable{
-		id:     o.UUID(),
+		id:     o.ID(),
 		Node:   o,
 		Schema: scc,
 	}, true

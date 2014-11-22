@@ -21,6 +21,7 @@ func Open(baseDir string) (*Git, error) {
 		return nil, err
 	}
 	if !git.IsInitialized() {
+		// fmt.Println("initializing")
 		err := git.Transaction(func(tx *gitlib.Transaction) error {
 			if err := tx.InitWithReadme(strings.NewReader("first commit")); err != nil {
 				return err
@@ -126,66 +127,72 @@ func (g *Store) load(path string, data interface{}) error {
 // only the props that have a key set are going to be changed
 func (g *Store) SaveNodeProperties(nodeUuid string, isNew bool, props map[string]interface{}) error {
 	path := nodeUUIDProp2path(nodeUuid)
-	if !isNew {
-		orig := map[string]interface{}{}
-		err := g.load(path, &orig)
-		if err != nil {
-			return err
-		}
-
-		for k, v := range props {
-			if v == nil {
-				delete(orig, k)
-			} else {
-				orig[k] = v
+	/*
+		if !isNew {
+			orig := map[string]interface{}{}
+			err := g.load(path, &orig)
+			if err != nil {
+				return err
 			}
+
+			for k, v := range props {
+				if v == nil {
+					delete(orig, k)
+				} else {
+					orig[k] = v
+				}
+			}
+			props = orig
 		}
-		props = orig
-	}
+	*/
 	return g.save(path, isNew, props)
 }
 
 // map relname => nodeUuid, only the relations that have a key set are going to be changed
 func (g *Store) SaveNodeRelations(nodeUuid string, isNew bool, relations map[string]string) error {
 	path := nodeUUIDRel2path(nodeUuid)
-	if !isNew {
-		orig := map[string]string{}
-		err := g.load(path, &orig)
-		if err != nil {
-			return err
-		}
-
-		for k, v := range relations {
-			if v == "" {
-				delete(orig, k)
-			} else {
-				orig[k] = v
+	/*
+		if !isNew {
+			orig := map[string]string{}
+			err := g.load(path, &orig)
+			if err != nil {
+				return err
 			}
+
+			for k, v := range relations {
+				if v == "" {
+					delete(orig, k)
+				} else {
+					orig[k] = v
+				}
+			}
+			relations = orig
 		}
-		relations = orig
-	}
+	*/
 	return g.save(path, isNew, relations)
 }
 
 // TODO map poolname => []nodeUuid, only the pools that have a key set are going to be changed
 func (g *Store) SaveNodePools(nodeUuid string, isNew bool, pools map[string][]string) error {
 	path := nodeUUIDPool2path(nodeUuid)
-	if !isNew {
-		orig := map[string][]string{}
-		err := g.load(path, &orig)
-		if err != nil {
-			return err
-		}
-
-		for k, v := range pools {
-			if len(v) == 0 {
-				delete(orig, k)
-			} else {
-				orig[k] = v
+	/*
+		if !isNew {
+			orig := map[string][]string{}
+			err := g.load(path, &orig)
+			if err != nil {
+				return err
 			}
+
+			for k, v := range pools {
+				if len(v) == 0 {
+					delete(orig, k)
+				} else {
+					orig[k] = v
+				}
+			}
+			pools = orig
 		}
-		pools = orig
-	}
+	*/
 	return g.save(path, isNew, pools)
 }
 

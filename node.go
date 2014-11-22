@@ -2,100 +2,85 @@ package zoom
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/go-contrib/uuid"
 )
 
-type Node interface {
-	UUID() string
-	Update(string, interface{})
-	Set(map[string]interface{})
-	SetUUID(uuid string)
-	Property(p Property) (has bool)
-	Properties() map[string]interface{}
-	Pools() map[string]Pool
-	Pool(k string) Pool
-	// return the dirty keys
-	Dirty() map[string]bool
-	// clears the dirty keys
-	ClearDirty()
-	Relations() map[string]Node
-	Relation(k string) Node
-	Save(Store) error
-	Remove(Store) error
-	LoadProperties(st Store, requestedProps []string) (err error)
-	LoadRelations(st Store, relations map[string][]string) (err error)
-	LoadPools(st Store, pools map[string][]string) (err error)
-}
+type Pool []*Node
 
-var _ Node = &node{}
-
-type Pool []Node
-
-type node struct {
+type Node struct {
 	uuid string
 	// Data may be Properties and relations to other *nodes or Pools
-	data map[string]interface{}
-
+	data  map[string]interface{}
 	dirty map[string]bool
-
 	isNew bool
+	shard string
 }
 
-func NewNode() Node {
-	return &node{
+// NewNode creates a new node
+// id is a string consisting of the shardname (may only contain the characters
+// ([a-z][a-z0-9]+), a - sign and a uuid
+// if the given id has no - sign, it is considered that the id is the shard and
+// the uuid has to be generated.
+// otherwise shard and uuid will be split off the id
+// the id returned by ID() can be passed to NewNode() in order to load a node
+func NewNode(id string) *Node {
+	n := &Node{
 		dirty: map[string]bool{},
 		data:  map[string]interface{}{},
-		uuid:  uuid.NewV4().String(),
-		isNew: true,
 	}
-}
-
-func (o *node) UUID() string {
-	return o.uuid
-}
-
-func (o *node) SetUUID(uuid string) {
-	if o == nil {
-		o = &node{
-			dirty: map[string]bool{},
-			data:  map[string]interface{}{},
-		}
+	pos := strings.Index(id, "-")
+	if pos == -1 {
+		n.shard = id
+		n.uuid = uuid.NewV4().String()
+		n.isNew = true
+	} else {
+		n.uuid = id[pos+1:]
+		n.shard = id[:pos]
 	}
-	o.uuid = uuid
+	return n
 }
 
-func (o *node) Set(s map[string]interface{}) {
+func (n *Node) ID() string {
+	return n.shard + "-" + n.uuid
+}
+
+func (n *Node) Shard() string {
+	return n.shard
+}
+
+func (o *Node) Set(s map[string]interface{}) {
 	for k, _ := range s {
 		o.dirty[k] = true
 	}
 	o.data = s
 }
 
-func (o *node) Update(key string, val interface{}) {
+func (o *Node) Update(key string, val interface{}) {
 	o.dirty[key] = true
 	o.data[key] = val
 }
 
-func (n *node) Dirty() map[string]bool {
+func (n *Node) Dirty() map[string]bool {
 	return n.dirty
 }
 
-func (n *node) ClearDirty() {
+func (n *Node) ClearDirty() {
 	n.dirty = map[string]bool{}
 }
 
-func (o *node) Property(p Property) (has bool) {
+func (o *Node) Property(p Property) (has bool) {
 	return p.Get(o.data)
 }
 
-func (o *node) Properties() map[string]interface{} {
+func (o *Node) Properties() map[string]interface{} {
 	props := map[string]interface{}{}
 
 	for name, d := range o.data {
 		switch ty := d.(type) {
-		case *node, Node:
+		case *Node, Node:
 			continue
 		case nil:
 			continue
@@ -109,17 +94,17 @@ func (o *node) Properties() map[string]interface{} {
 	return props
 }
 
-func (o *node) Relations() map[string]Node {
-	rels := map[string]Node{}
+func (o *Node) Relations() map[string]*Node {
+	rels := map[string]*Node{}
 	for name, d := range o.data {
-		if rel, ok := d.(*node); ok {
+		if rel, ok := d.(*Node); ok {
 			rels[name] = rel
 		}
 	}
 	return rels
 }
 
-func (o *node) Pools() map[string]Pool {
+func (o *Node) Pools() map[string]Pool {
 	rels := map[string]Pool{}
 	for name, d := range o.data {
 		if rel, ok := d.(Pool); ok {
@@ -129,7 +114,7 @@ func (o *node) Pools() map[string]Pool {
 	return rels
 }
 
-func (o *node) Pool(k string) Pool {
+func (o *Node) Pool(k string) Pool {
 	oo, has := o.data[k]
 	if !has {
 		return nil
@@ -137,17 +122,17 @@ func (o *node) Pool(k string) Pool {
 	return oo.(Pool)
 }
 
-func (o *node) Relation(k string) Node {
+func (o *Node) Relation(k string) *Node {
 	oo, has := o.data[k]
 	if !has {
 		return nil
 	}
-	return oo.(*node)
+	return oo.(*Node)
 }
 
-func (n *node) LoadProperties(st Store, requestedProps []string) (err error) {
+func (n *Node) LoadProperties(st Store, requestedProps []string) (err error) {
 	if len(requestedProps) > 0 {
-		props, err := st.GetNodeProperties(n.UUID(), requestedProps)
+		props, err := st.GetNodeProperties(n.ID(), requestedProps)
 
 		if err != nil {
 			return err
@@ -160,7 +145,7 @@ func (n *node) LoadProperties(st Store, requestedProps []string) (err error) {
 	return nil
 }
 
-func (n *node) LoadRelations(st Store, relations map[string][]string) (err error) {
+func (n *Node) LoadRelations(st Store, relations map[string][]string) (err error) {
 	if len(relations) > 0 {
 
 		requestedRels := make([]string, len(relations))
@@ -171,21 +156,20 @@ func (n *node) LoadRelations(st Store, relations map[string][]string) (err error
 			i++
 		}
 
-		rels, err := st.GetNodeRelations(n.UUID(), requestedRels)
+		rels, err := st.GetNodeRelations(n.ID(), requestedRels)
 
 		if err != nil {
 			return err
 		}
 
 		for k, fields := range relations {
-			uuid := rels[k]
-			props, err := st.GetNodeProperties(uuid, fields)
+			id := rels[k]
+			props, err := st.GetNodeProperties(id, fields)
 			if err != nil {
 				return err
 			}
 
-			relNode := NewNode()
-			relNode.SetUUID(uuid)
+			relNode := NewNode(id)
 			relNode.Set(props)
 			n.data[k] = relNode
 		}
@@ -194,7 +178,7 @@ func (n *node) LoadRelations(st Store, relations map[string][]string) (err error
 	return nil
 }
 
-func (n *node) LoadPools(st Store, pools map[string][]string) (err error) {
+func (n *Node) LoadPools(st Store, pools map[string][]string) (err error) {
 	if len(pools) > 0 {
 
 		requestedPools := make([]string, len(pools))
@@ -205,26 +189,25 @@ func (n *node) LoadPools(st Store, pools map[string][]string) (err error) {
 			i++
 		}
 
-		pls, err := st.GetNodePools(n.UUID(), requestedPools)
+		pls, err := st.GetNodePools(n.ID(), requestedPools)
 
 		if err != nil {
 			return err
 		}
 
 		for k, fields := range pools {
-			uuids := pls[k]
+			ids := pls[k]
 
-			nodes := make([]Node, len(uuids))
+			nodes := make([]*Node, len(ids))
 
-			for i, uuid := range uuids {
+			for i, id := range ids {
 
-				props, err := st.GetNodeProperties(uuid, fields)
+				props, err := st.GetNodeProperties(id, fields)
 				if err != nil {
 					return err
 				}
 
-				poolNode := NewNode()
-				poolNode.SetUUID(uuid)
+				poolNode := NewNode(id)
 				poolNode.Set(props)
 				nodes[i] = poolNode
 			}
@@ -237,7 +220,7 @@ func (n *node) LoadPools(st Store, pools map[string][]string) (err error) {
 }
 
 // TODO: offer a way to just save Properties, Relations or Pools
-func (n *node) Save(st Store) (err error) {
+func (n *Node) Save(st Store) (err error) {
 	dirty, props, rels, pools := n.Dirty(), n.Properties(), n.Relations(), n.Pools()
 	saveProps, saveRels, savePools := map[string]interface{}{}, map[string]string{}, map[string][]string{}
 
@@ -251,38 +234,38 @@ func (n *node) Save(st Store) (err error) {
 
 			rel, isRel := rels[key]
 			if isRel {
-				saveRels[key] = rel.UUID()
+				saveRels[key] = rel.ID()
 				continue
 			}
 
 			pool, isPool := pools[key]
 			if isPool {
-				poolUUIDs := make([]string, len(pool))
+				poolIDs := make([]string, len(pool))
 				for i, nd := range pool {
-					poolUUIDs[i] = nd.UUID()
+					poolIDs[i] = nd.ID()
 				}
-				savePools[key] = poolUUIDs
+				savePools[key] = poolIDs
 				continue
 			}
 		}
 	}
 
 	// if len(saveProps) > 0 {
-	err = st.SaveNodeProperties(n.UUID(), n.isNew, saveProps)
+	err = st.SaveNodeProperties(n.ID(), n.isNew, saveProps)
 	if err != nil {
 		return err
 	}
 	// }
 
 	// if len(saveRels) > 0 {
-	err = st.SaveNodeRelations(n.UUID(), n.isNew, saveRels)
+	err = st.SaveNodeRelations(n.ID(), n.isNew, saveRels)
 	if err != nil {
 		return err
 	}
 	// }
 
 	// if len(savePools) > 0 {
-	err = st.SaveNodePools(n.UUID(), n.isNew, savePools)
+	err = st.SaveNodePools(n.ID(), n.isNew, savePools)
 	if err != nil {
 		return err
 	}
@@ -293,6 +276,6 @@ func (n *node) Save(st Store) (err error) {
 	return nil
 }
 
-func (n *node) Remove(st Store) (err error) {
-	return st.RemoveNode(n.UUID())
+func (n *Node) Remove(st Store) (err error) {
+	return st.RemoveNode(n.ID())
 }

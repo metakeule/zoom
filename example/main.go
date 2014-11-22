@@ -34,7 +34,7 @@ func main() {
 
 	for i := 0; i < 100; i++ {
 		fn := func() []func(zoom.Store) error {
-			nadja := zoom.NewNode()
+			nadja := zoom.NewNode("shard1")
 
 			nadja.Set(map[string]interface{}{
 				"Age":       44,
@@ -42,7 +42,7 @@ func main() {
 				"LastName":  "Poetschki",
 			})
 
-			benny := zoom.NewNode()
+			benny := zoom.NewNode("shard1")
 
 			benny.Set(map[string]interface{}{
 				"Age":       42,

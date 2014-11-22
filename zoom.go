@@ -41,21 +41,21 @@ type Nameable interface {
 	Name() string
 }
 
-type StructerFunc func(Node) (stru Identifiable, ok bool)
+type StructerFunc func(*Node) (stru Identifiable, ok bool)
 
-func (s StructerFunc) Struct(o Node) (stru Identifiable, ok bool) {
+func (s StructerFunc) Struct(o *Node) (stru Identifiable, ok bool) {
 	return s(o)
 }
 
 //type MkStruct func(*O) (stru interface{}, ok bool)
 type Structer interface {
-	Struct(Node) (stru Identifiable, ok bool)
+	Struct(*Node) (stru Identifiable, ok bool)
 }
 
 // StructerFallback tries each Structer until one matches
 type StructerFallback []Structer
 
-func (f StructerFallback) Struct(o Node) (stru Identifiable, ok bool) {
+func (f StructerFallback) Struct(o *Node) (stru Identifiable, ok bool) {
 	for _, str := range f {
 		stru, ok = str.Struct(o)
 		if ok {
@@ -85,14 +85,14 @@ func (h HandlerFallback) Handle(stru Identifiable) (ok bool) {
 // DistinctMix has Os that can be just one Struct type
 // only Os that can be transformed to a struct will be handled
 type DistinctMix struct {
-	Nodes []Node
+	Nodes []*Node
 	StructerFallback
 	HandlerFallback
 }
 
 // Handle handles each O that can be handled and returns the handled *Os
 // and the unhandled *Os
-func (d DistinctMix) Handle() (handled, unhandled []Node) {
+func (d DistinctMix) Handle() (handled, unhandled []*Node) {
 	for _, oo := range d.Nodes {
 		stru, ok := d.StructerFallback.Struct(oo)
 		if ok {
