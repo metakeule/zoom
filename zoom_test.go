@@ -37,20 +37,15 @@ func TestStore(t *testing.T) {
 	benny := zoom.NewNode("shard1")
 
 	fn := func() []func(zoom.Store) error {
+		nadja.SetFloat("Age", 44)
+		nadja.SetString("FirstName", "Nadja")
+		nadja.SetString("LastName", "Poetschki")
 
-		nadja.Set(map[string]interface{}{
-			"Age":       44,
-			"FirstName": "Nadja",
-			"LastName":  "Poetschki",
-		})
+		benny.SetFloat("Age", 42)
+		benny.SetString("FirstName", "Benny")
+		benny.SetString("LastName", "Arns")
 
-		benny.Set(map[string]interface{}{
-			"Age":       42,
-			"FirstName": "Benny",
-			"LastName":  "Arns",
-		})
-
-		nadja.Update("friend-of", benny)
+		// nadja.Update("friend-of", benny)
 
 		return []func(zoom.Store) error{nadja.Save, benny.Save}
 	}
@@ -83,31 +78,27 @@ func TestStore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	propsNadja := nadja2.Properties()
+	ageNadja := nadja2.GetFloat("Age")
 
-	ageNadja, ok := propsNadja["Age"].(float64)
-
-	if !ok || ageNadja != 44 {
+	if ageNadja != 44 {
 		t.Errorf("wrong age for nadja expected: %v, got %v", 44, ageNadja)
 	}
 
-	firstNameNadja, ok := propsNadja["FirstName"].(string)
+	firstNameNadja := nadja2.GetString("FirstName")
 
-	if !ok || firstNameNadja != "Nadja" {
+	if firstNameNadja != "Nadja" {
 		t.Errorf("wrong FirstName for nadja expected: %v, got %v", "Nadja", firstNameNadja)
 	}
 
-	propsBenny := benny2.Properties()
+	ageBenny := benny2.GetFloat("Age")
 
-	ageBenny, ok := propsBenny["Age"].(float64)
-
-	if !ok || ageBenny != 42 {
+	if ageBenny != 42 {
 		t.Errorf("wrong age for nadja expected: %v, got %v", 42, ageBenny)
 	}
 
-	firstNameBenny, ok := propsBenny["FirstName"].(string)
+	firstNameBenny := benny2.GetString("FirstName")
 
-	if !ok || firstNameBenny != "Benny" {
+	if firstNameBenny != "Benny" {
 		t.Errorf("wrong FirstName for nadja expected: %v, got %v", "Benny", firstNameBenny)
 	}
 

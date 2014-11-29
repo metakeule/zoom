@@ -2,21 +2,80 @@ package zoom
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/go-contrib/uuid"
 )
 
-type Pool []*Node
-
 type Node struct {
-	uuid string
-	// Data may be Properties and relations to other *nodes or Pools
-	data  map[string]interface{}
+	UUID  string
+	Shard string
+	props map[string]interface{} // saved in nodes file
+	texts map[string]string      // saved in each file for a text (text is string lenghth > 255) texts are always UTF-8, \n
+	blobs map[string]io.Reader   // saved outside the repo inside the working dir (will be synced via rsync), blobpath must begin with mimetype
 	dirty map[string]bool
-	isNew bool
-	shard string
+	IsNew bool
+}
+
+func (n *Node) LoadProperties(st Store, requestedProps []string) (err error) {
+	if len(requestedProps) > 0 {
+		props, err := st.GetNodeProperties(n.UUID, n.Shard, requestedProps)
+
+		if err != nil {
+			return err
+		}
+
+		for k, v := range props {
+			n.props[k] = v
+			n.dirty[k] = false
+		}
+	}
+	return nil
+}
+
+func (n *Node) LoadTexts(st Store, requestedTexts []string) (err error) {
+	if len(requestedTexts) > 0 {
+		texts, err := st.GetNodeTexts(n.UUID, n.Shard, requestedTexts)
+
+		if err != nil {
+			return err
+		}
+
+		for k, v := range texts {
+			n.texts[k] = v
+			n.dirty[k] = false
+		}
+	}
+	return nil
+}
+
+func (n *Node) LoadBlobs(st Store, requestedBlobs []string) (err error) {
+	if len(requestedBlobs) > 0 {
+		blobs, err := st.GetNodeBlobs(n.UUID, n.Shard, requestedBlobs)
+
+		if err != nil {
+			return err
+		}
+
+		for k, v := range blobs {
+			n.blobs[k] = v
+			n.dirty[k] = false
+		}
+	}
+	return nil
+}
+
+func SplitID(id string) (shard, uuid string, err error) {
+	pos := strings.Index(id, "-")
+	if pos == -1 {
+		err = fmt.Errorf("invalid id %#v", id)
+	} else {
+		uuid = id[pos+1:]
+		shard = id[:pos]
+	}
+	return
 }
 
 // NewNode creates a new node
@@ -29,253 +88,171 @@ type Node struct {
 func NewNode(id string) *Node {
 	n := &Node{
 		dirty: map[string]bool{},
-		data:  map[string]interface{}{},
+		props: map[string]interface{}{},
+		texts: map[string]string{},
+		blobs: map[string]io.Reader{},
 	}
 	pos := strings.Index(id, "-")
 	if pos == -1 {
-		n.shard = id
-		n.uuid = uuid.NewV4().String()
-		n.isNew = true
+		n.Shard = id
+		n.UUID = uuid.NewV4().String()
+		n.IsNew = true
 	} else {
-		n.uuid = id[pos+1:]
-		n.shard = id[:pos]
+		n.UUID = id[pos+1:]
+		n.Shard = id[:pos]
 	}
 	return n
 }
 
 func (n *Node) ID() string {
-	return n.shard + "-" + n.uuid
+	return n.Shard + "-" + n.UUID
 }
 
-func (n *Node) Shard() string {
-	return n.shard
+func (n *Node) GetBlob(blob string) io.Reader    { return n.blobs[blob] }
+func (n *Node) GetText(text string) string       { return n.texts[text] }
+func (n *Node) GetBool(prop string) bool         { return n.props[prop].(bool) }
+func (n *Node) GetBools(prop string) []bool      { return n.props[prop].([]bool) }
+func (n *Node) GetInt(prop string) int64         { return n.props[prop].(int64) }
+func (n *Node) GetInts(prop string) []int64      { return n.props[prop].([]int64) }
+func (n *Node) GetFloat(prop string) float64     { return n.props[prop].(float64) }
+func (n *Node) GetFloats(prop string) []float64  { return n.props[prop].([]float64) }
+func (n *Node) GetString(prop string) string     { return n.props[prop].(string) }
+func (n *Node) GetStrings(prop string) []string  { return n.props[prop].([]string) }
+func (n *Node) GetTime(prop string) time.Time    { return n.props[prop].(time.Time) }
+func (n *Node) GetTimes(prop string) []time.Time { return n.props[prop].([]time.Time) }
+
+// SetBlob stores a binary large object
+func (o *Node) SetBlob(prop string, rc io.Reader) {
+	o.dirty[prop] = true
+	o.blobs[prop] = rc
 }
 
-func (o *Node) Set(s map[string]interface{}) {
-	for k, _ := range s {
-		o.dirty[k] = true
+// SetText stores larger strings that can be more than 255 bytes long
+func (o *Node) SetText(prop string, val string) {
+	o.dirty[prop] = true
+	o.texts[prop] = val
+}
+
+func (o *Node) SetBool(prop string, val bool) {
+	o.dirty[prop] = true
+	o.props[prop] = val
+}
+
+func (o *Node) SetBools(prop string, vals ...bool) {
+	o.dirty[prop] = true
+	o.props[prop] = vals
+}
+
+func (o *Node) SetInt(prop string, val int64) {
+	o.dirty[prop] = true
+	o.props[prop] = val
+}
+
+func (o *Node) SetInts(prop string, vals ...int64) {
+	o.dirty[prop] = true
+	o.props[prop] = vals
+}
+
+func (o *Node) SetFloat(prop string, val float64) {
+	o.dirty[prop] = true
+	o.props[prop] = val
+}
+
+func (o *Node) SetFloats(prop string, vals ...float64) {
+	o.dirty[prop] = true
+	o.props[prop] = vals
+}
+
+// SetString sets a string that has the max length of 255 bytes.
+// a larger string returns an error
+func (o *Node) SetString(prop string, val string) error {
+	if len(val) > 255 {
+		return fmt.Errorf("string %#v is too large for SetString value, use SetText", val)
 	}
-	o.data = s
-}
-
-func (o *Node) Update(key string, val interface{}) {
-	o.dirty[key] = true
-	o.data[key] = val
-}
-
-func (n *Node) Dirty() map[string]bool {
-	return n.dirty
-}
-
-func (n *Node) ClearDirty() {
-	n.dirty = map[string]bool{}
-}
-
-func (o *Node) Property(p Property) (has bool) {
-	return p.Get(o.data)
-}
-
-func (o *Node) Properties() map[string]interface{} {
-	props := map[string]interface{}{}
-
-	for name, d := range o.data {
-		switch ty := d.(type) {
-		case *Node, Node:
-			continue
-		case nil:
-			continue
-		case int, int64, float64, time.Time, string, []int, []float64, []time.Time, []string:
-			props[name] = ty
-		default:
-			panic(fmt.Sprintf("type %T not allowed in Data", d))
-		}
-	}
-
-	return props
-}
-
-func (o *Node) Relations() map[string]*Node {
-	rels := map[string]*Node{}
-	for name, d := range o.data {
-		if rel, ok := d.(*Node); ok {
-			rels[name] = rel
-		}
-	}
-	return rels
-}
-
-func (o *Node) Pools() map[string]Pool {
-	rels := map[string]Pool{}
-	for name, d := range o.data {
-		if rel, ok := d.(Pool); ok {
-			rels[name] = rel
-		}
-	}
-	return rels
-}
-
-func (o *Node) Pool(k string) Pool {
-	oo, has := o.data[k]
-	if !has {
-		return nil
-	}
-	return oo.(Pool)
-}
-
-func (o *Node) Relation(k string) *Node {
-	oo, has := o.data[k]
-	if !has {
-		return nil
-	}
-	return oo.(*Node)
-}
-
-func (n *Node) LoadProperties(st Store, requestedProps []string) (err error) {
-	if len(requestedProps) > 0 {
-		props, err := st.GetNodeProperties(n.ID(), requestedProps)
-
-		if err != nil {
-			return err
-		}
-
-		for k, v := range props {
-			n.data[k] = v
-		}
-	}
+	o.dirty[prop] = true
+	o.props[prop] = val
 	return nil
 }
 
-func (n *Node) LoadRelations(st Store, relations map[string][]string) (err error) {
-	if len(relations) > 0 {
+// SetStrings sets strings that have the max length of 255 bytes.
+// larger strings return an error
+func (o *Node) SetStrings(prop string, vals ...string) error {
 
-		requestedRels := make([]string, len(relations))
-
-		i := 0
-		for k, _ := range relations {
-			requestedRels[i] = k
-			i++
-		}
-
-		rels, err := st.GetNodeRelations(n.ID(), requestedRels)
-
-		if err != nil {
-			return err
-		}
-
-		for k, fields := range relations {
-			id := rels[k]
-			props, err := st.GetNodeProperties(id, fields)
-			if err != nil {
-				return err
-			}
-
-			relNode := NewNode(id)
-			relNode.Set(props)
-			n.data[k] = relNode
+	for _, s := range vals {
+		if len(s) > 255 {
+			return fmt.Errorf("string %#v is too large for SetString value, use SetText", s)
 		}
 
 	}
+
+	o.dirty[prop] = true
+	o.props[prop] = vals
 	return nil
 }
 
-func (n *Node) LoadPools(st Store, pools map[string][]string) (err error) {
-	if len(pools) > 0 {
+func (o *Node) SetTime(prop string, val time.Time) {
+	o.dirty[prop] = true
+	o.props[prop] = val
+}
 
-		requestedPools := make([]string, len(pools))
-
-		i := 0
-		for k, _ := range pools {
-			requestedPools[i] = k
-			i++
-		}
-
-		pls, err := st.GetNodePools(n.ID(), requestedPools)
-
-		if err != nil {
-			return err
-		}
-
-		for k, fields := range pools {
-			ids := pls[k]
-
-			nodes := make([]*Node, len(ids))
-
-			for i, id := range ids {
-
-				props, err := st.GetNodeProperties(id, fields)
-				if err != nil {
-					return err
-				}
-
-				poolNode := NewNode(id)
-				poolNode.Set(props)
-				nodes[i] = poolNode
-			}
-
-			n.data[k] = Pool(nodes)
-		}
-
-	}
-	return nil
+func (o *Node) SetTimes(prop string, vals ...time.Time) {
+	o.dirty[prop] = true
+	o.props[prop] = vals
 }
 
 // TODO: offer a way to just save Properties, Relations or Pools
 func (n *Node) Save(st Store) (err error) {
-	dirty, props, rels, pools := n.Dirty(), n.Properties(), n.Relations(), n.Pools()
-	saveProps, saveRels, savePools := map[string]interface{}{}, map[string]string{}, map[string][]string{}
+	// dirty, props, rels, pools := n.Dirty(), n.Properties(), n.Relations(), n.Pools()
+	saveProps, saveTexts, saveBlobs := map[string]interface{}{}, map[string]string{}, map[string]io.Reader{}
 
-	for key, isDirty := range dirty {
+	for key, isDirty := range n.dirty {
 		if isDirty {
-			prop, isProp := props[key]
+			prop, isProp := n.props[key]
 			if isProp {
 				saveProps[key] = prop
 				continue
 			}
 
-			rel, isRel := rels[key]
-			if isRel {
-				saveRels[key] = rel.ID()
+			text, isText := n.texts[key]
+			if isText {
+				saveTexts[key] = text
 				continue
 			}
 
-			pool, isPool := pools[key]
-			if isPool {
-				poolIDs := make([]string, len(pool))
-				for i, nd := range pool {
-					poolIDs[i] = nd.ID()
-				}
-				savePools[key] = poolIDs
+			blob, isBlob := n.blobs[key]
+			if isBlob {
+				saveBlobs[key] = blob
 				continue
 			}
 		}
 	}
 
-	// if len(saveProps) > 0 {
-	err = st.SaveNodeProperties(n.ID(), n.isNew, saveProps)
-	if err != nil {
-		return err
+	if len(saveProps) > 0 {
+		err = st.SaveNodeProperties(n.UUID, n.Shard, n.IsNew, saveProps)
+		if err != nil {
+			return err
+		}
 	}
-	// }
 
-	// if len(saveRels) > 0 {
-	err = st.SaveNodeRelations(n.ID(), n.isNew, saveRels)
-	if err != nil {
-		return err
+	if len(saveTexts) > 0 {
+		err = st.SaveNodeTexts(n.UUID, n.Shard, n.IsNew, saveTexts)
+		if err != nil {
+			return err
+		}
 	}
-	// }
 
-	// if len(savePools) > 0 {
-	err = st.SaveNodePools(n.ID(), n.isNew, savePools)
-	if err != nil {
-		return err
+	if len(saveBlobs) > 0 {
+		err = st.SaveNodeBlobs(n.UUID, n.Shard, n.IsNew, saveBlobs)
+		if err != nil {
+			return err
+		}
 	}
-	// }
 
-	n.ClearDirty()
-	n.isNew = false
+	n.dirty = map[string]bool{}
+	n.IsNew = false
 	return nil
 }
 
 func (n *Node) Remove(st Store) (err error) {
-	return st.RemoveNode(n.ID())
+	return st.RemoveNode(n.UUID, n.Shard)
 }

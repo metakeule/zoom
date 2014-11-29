@@ -1,5 +1,6 @@
 package zoom
 
+/*
 type SchemaRules []string
 
 func (s *SchemaRules) Get(data map[string]interface{}) bool {
@@ -98,3 +99,4 @@ func MkValidateable(o *Node) (stru Identifiable, ok bool) {
 
 var _ StructerFunc = MkSchema
 var _ StructerFunc = MkValidateable
+*/
