@@ -16,7 +16,6 @@ type Node struct {
 	texts map[string]string      // saved in each file for a text (text is string lenghth > 255) texts are always UTF-8, \n
 	blobs map[string]io.Reader   // saved outside the repo inside the working dir (will be synced via rsync), blobpath must begin with mimetype
 	dirty map[string]bool
-	IsNew bool
 }
 
 func (n *Node) LoadProperties(st Store, requestedProps []string) (err error) {
@@ -51,17 +50,11 @@ func (n *Node) LoadTexts(st Store, requestedTexts []string) (err error) {
 	return nil
 }
 
-func (n *Node) LoadBlobs(st Store, requestedBlobs []string) (err error) {
+func (n *Node) LoadBlobs(st Store, requestedBlobs []string, fn func(string, io.Reader) error) (err error) {
 	if len(requestedBlobs) > 0 {
-		blobs, err := st.GetNodeBlobs(n.UUID, n.Shard, requestedBlobs)
-
+		err := st.GetNodeBlobs(n.UUID, n.Shard, requestedBlobs, fn)
 		if err != nil {
 			return err
-		}
-
-		for k, v := range blobs {
-			n.blobs[k] = v
-			n.dirty[k] = false
 		}
 	}
 	return nil
@@ -96,7 +89,6 @@ func NewNode(id string) *Node {
 	if pos == -1 {
 		n.Shard = id
 		n.UUID = uuid.NewV4().String()
-		n.IsNew = true
 	} else {
 		n.UUID = id[pos+1:]
 		n.Shard = id[:pos]
@@ -108,18 +100,43 @@ func (n *Node) ID() string {
 	return n.Shard + "-" + n.UUID
 }
 
-func (n *Node) GetBlob(blob string) io.Reader    { return n.blobs[blob] }
-func (n *Node) GetText(text string) string       { return n.texts[text] }
-func (n *Node) GetBool(prop string) bool         { return n.props[prop].(bool) }
-func (n *Node) GetBools(prop string) []bool      { return n.props[prop].([]bool) }
-func (n *Node) GetInt(prop string) int64         { return n.props[prop].(int64) }
-func (n *Node) GetInts(prop string) []int64      { return n.props[prop].([]int64) }
-func (n *Node) GetFloat(prop string) float64     { return n.props[prop].(float64) }
-func (n *Node) GetFloats(prop string) []float64  { return n.props[prop].([]float64) }
-func (n *Node) GetString(prop string) string     { return n.props[prop].(string) }
-func (n *Node) GetStrings(prop string) []string  { return n.props[prop].([]string) }
-func (n *Node) GetTime(prop string) time.Time    { return n.props[prop].(time.Time) }
-func (n *Node) GetTimes(prop string) []time.Time { return n.props[prop].([]time.Time) }
+func (n *Node) GetBlob(blob string) io.Reader { return n.blobs[blob] }
+func (n *Node) GetText(text string) string    { return n.texts[text] }
+func (n *Node) GetBool(prop string) bool      { return n.props[prop].(bool) }
+func (n *Node) GetBools(prop string) []bool {
+	if n.props[prop] == nil {
+		return nil
+	}
+	return n.props[prop].([]bool)
+}
+func (n *Node) GetInt(prop string) int64 { return n.props[prop].(int64) }
+func (n *Node) GetInts(prop string) []int64 {
+	if n.props[prop] == nil {
+		return nil
+	}
+	return n.props[prop].([]int64)
+}
+func (n *Node) GetFloat(prop string) float64 { return n.props[prop].(float64) }
+func (n *Node) GetFloats(prop string) []float64 {
+	if n.props[prop] == nil {
+		return nil
+	}
+	return n.props[prop].([]float64)
+}
+func (n *Node) GetString(prop string) string { return n.props[prop].(string) }
+func (n *Node) GetStrings(prop string) []string {
+	if n.props[prop] == nil {
+		return nil
+	}
+	return n.props[prop].([]string)
+}
+func (n *Node) GetTime(prop string) time.Time { return n.props[prop].(time.Time) }
+func (n *Node) GetTimes(prop string) []time.Time {
+	if n.props[prop] == nil {
+		return nil
+	}
+	return n.props[prop].([]time.Time)
+}
 
 // SetBlob stores a binary large object
 func (o *Node) SetBlob(prop string, rc io.Reader) {
@@ -200,9 +217,53 @@ func (o *Node) SetTimes(prop string, vals ...time.Time) {
 	o.props[prop] = vals
 }
 
-// TODO: offer a way to just save Properties, Relations or Pools
+func (n *Node) SaveTexts(st Store) (err error) {
+	saveTexts := map[string]string{}
+
+	for textKey, textVal := range n.texts {
+		if n.dirty[textKey] {
+			saveTexts[textKey] = textVal
+		}
+	}
+
+	if len(saveTexts) > 0 {
+		err = st.SaveNodeTexts(n.UUID, n.Shard, saveTexts)
+		if err != nil {
+			return err
+		}
+	}
+
+	for textKey := range n.texts {
+		delete(n.dirty, textKey)
+	}
+
+	return nil
+}
+
+func (n *Node) SaveBlobs(st Store) (err error) {
+	saveBlobs := map[string]io.Reader{}
+
+	for blobKey, blobVal := range n.blobs {
+		if n.dirty[blobKey] {
+			saveBlobs[blobKey] = blobVal
+		}
+	}
+
+	if len(saveBlobs) > 0 {
+		err = st.SaveNodeBlobs(n.UUID, n.Shard, saveBlobs)
+		if err != nil {
+			return err
+		}
+	}
+
+	for blobKey := range n.blobs {
+		delete(n.dirty, blobKey)
+	}
+
+	return nil
+}
+
 func (n *Node) Save(st Store) (err error) {
-	// dirty, props, rels, pools := n.Dirty(), n.Properties(), n.Relations(), n.Pools()
 	saveProps, saveTexts, saveBlobs := map[string]interface{}{}, map[string]string{}, map[string]io.Reader{}
 
 	for key, isDirty := range n.dirty {
@@ -228,31 +289,124 @@ func (n *Node) Save(st Store) (err error) {
 	}
 
 	if len(saveProps) > 0 {
-		err = st.SaveNodeProperties(n.UUID, n.Shard, n.IsNew, saveProps)
+		err = st.SaveNodeProperties(n.UUID, n.Shard, saveProps)
 		if err != nil {
 			return err
 		}
 	}
 
 	if len(saveTexts) > 0 {
-		err = st.SaveNodeTexts(n.UUID, n.Shard, n.IsNew, saveTexts)
+		err = st.SaveNodeTexts(n.UUID, n.Shard, saveTexts)
 		if err != nil {
 			return err
 		}
 	}
 
 	if len(saveBlobs) > 0 {
-		err = st.SaveNodeBlobs(n.UUID, n.Shard, n.IsNew, saveBlobs)
+		err = st.SaveNodeBlobs(n.UUID, n.Shard, saveBlobs)
 		if err != nil {
 			return err
 		}
 	}
 
 	n.dirty = map[string]bool{}
-	n.IsNew = false
 	return nil
 }
 
 func (n *Node) Remove(st Store) (err error) {
 	return st.RemoveNode(n.UUID, n.Shard)
+}
+
+// NewEdge creates a new Edge to the target edge, by the way creating a property node based on the given
+// properties. The property node is part of the same shard as Node
+func (n *Node) NewEdge(st Store, category string, to *Node, props map[string]interface{}) error {
+	if len(props) == 0 {
+		edge := NewEdge(category, n, to, nil)
+		return edge.Save(st)
+	}
+	propNode := NewNode(n.Shard)
+	propNode.props = props
+
+	for k, _ := range props {
+		propNode.dirty[k] = true
+	}
+
+	if err := propNode.Save(st); err != nil {
+		return err
+	}
+
+	edge := NewEdge(category, n, to, propNode)
+	return edge.Save(st)
+}
+
+// RemoveEdge removes the edge of the given category, removing the property node of the edge
+func (n *Node) RemoveEdge(st Store, category string, to *Node) error {
+	edges, err := st.GetEdges(category, n.Shard, n.UUID)
+	if err != nil {
+		return err
+	}
+	if len(edges) == 0 {
+		return nil
+	}
+
+	propID, has := edges[to.ID()]
+
+	if !has {
+		return nil
+	}
+
+	propNode := NewNode(propID)
+	if err := propNode.Remove(st); err != nil {
+		return err
+	}
+	delete(edges, to.ID())
+	if len(edges) == 0 {
+		return st.RemoveEdges(category, n.Shard, n.UUID)
+	}
+	return st.SaveEdges(category, n.Shard, n.UUID, edges)
+}
+
+// GetEdge returns nil, if the edge could not be found, does not load the properties of the property edge
+func (n *Node) GetEdge(st Store, category string, to *Node) (*Edge, error) {
+	edges, err := st.GetEdges(category, n.Shard, n.UUID)
+	if err != nil {
+		return nil, err
+	}
+	if len(edges) == 0 {
+		return nil, nil
+	}
+
+	propID, has := edges[to.ID()]
+
+	if !has {
+		return nil, nil
+	}
+
+	if propID == "" {
+		return NewEdge(category, n, to, nil), nil
+	}
+
+	return NewEdge(category, n, to, NewNode(propID)), nil
+}
+
+// GetEdges returns all edges for the given category. it does however not load the properties neither
+// of the property node nor of the target node
+func (n *Node) GetEdges(st Store, category string) ([]*Edge, error) {
+	edges, err := st.GetEdges(category, n.Shard, n.UUID)
+	if err != nil {
+		return nil, err
+	}
+	if len(edges) == 0 {
+		return nil, nil
+	}
+
+	res := make([]*Edge, len(edges))
+
+	i := 0
+	for toID, propID := range edges {
+		res[i] = NewEdge(category, n, NewNode(toID), NewNode(propID))
+		i++
+	}
+
+	return res, nil
 }

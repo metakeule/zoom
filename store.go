@@ -14,15 +14,15 @@ type Store interface {
 	Rollback() error
 
 	// only the props that have a key set are going to be changed
-	SaveNodeProperties(uuid string, shard string, isNew bool, props map[string]interface{}) error
+	SaveNodeProperties(uuid string, shard string, props map[string]interface{}) error
 
 	// map relname => nodeUuid, only the texts that have a key set are going to be changed
-	SaveNodeTexts(uuid string, shard string, isNew bool, texts map[string]string) error
+	SaveNodeTexts(uuid string, shard string, texts map[string]string) error
 
 	// map poolname => []nodeUuid, only the blobs that have a key set are going to be changed
-	SaveNodeBlobs(uuid string, shard string, isNew bool, blobs map[string]io.Reader) error
+	SaveNodeBlobs(uuid string, shard string, blobs map[string]io.Reader) error
 
-	SaveEdges(category, fromShard, fromUUID string, isNew bool, edges map[string]string) error
+	SaveEdges(category, fromShard, fromUUID string, edges map[string]string) error
 
 	RemoveEdges(category, fromShard, fromUUID string) error
 
@@ -61,7 +61,8 @@ type Store interface {
 	// she wants to check, if all requested pools have been returned
 	// also there is no guarantee that the nodes which uuids are returned do still exist.
 	// there must be wrappers put around the store to ensure this (preferably by using indices)
-	GetNodeBlobs(uuid string, shard string, requestedBlobs []string) (pools map[string]io.Reader, err error)
+	// GetNodeBlobs(uuid string, shard string, requestedBlobs []string) (pools map[string]io.Reader, err error)
+	GetNodeBlobs(uuid string, shard string, requestedBlobs []string, fn func(string, io.Reader) error) error
 
 	// save the changes in the db
 	Commit(comment string) error
