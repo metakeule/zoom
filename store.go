@@ -8,42 +8,104 @@ import "io"
 	blobs map[string]io.Reader // saved outside the repo inside the working dir (will be synced via rsync), blobpath must begin with mimetype
 */
 
+/*
+type Shard struct {
+	store Store
+	name  string
+}
+
+func NewShard(name string, st Store) *Shard {
+	return &Shard{name: name, store: st}
+}
+
+type Transaction struct {
+	*Shard
+}
+
+func (s *Transaction) SaveNodeProperties(uuid string, props map[string]interface{}) error {
+	return s.store.SaveNodeProperties(uuid, s.name, props)
+}
+
+func (s *Transaction) SaveNodeTexts(uuid string, texts map[string]string) error {
+	return s.store.SaveNodeTexts(uuid, s.name, texts)
+}
+
+func (s *Transaction) SaveNodeBlobs(uuid string, blobs map[string]io.Reader) error {
+	return s.store.SaveNodeBlobs(uuid, s.name, blobs)
+}
+
+func (s *Transaction) SaveEdges(category, fromUUID string, edges map[string]string) error {
+	return s.store.SaveEdges(category, s.name, fromUUID, edges)
+}
+
+func (s *Transaction) RemoveEdges(category, fromUUID string) error {
+	return s.store.RemoveEdges(category, s.name, fromUUID)
+}
+
+func (s *Transaction) GetEdges(category, fromUUID string) (edges map[string]string, err error) {
+	return s.store.GetEdges(category, s.name, fromUUID)
+}
+
+func (s *Transaction) RemoveNode(uuid string) error {
+	return s.store.RemoveNode(uuid, s.name)
+}
+
+func (s *Transaction) GetNodeProperties(uuid string, requestedProps []string) (props map[string]interface{}, err error) {
+	return s.store.GetNodeProperties(uuid, s.name, requestedProps)
+}
+
+func (s *Transaction) GetNodeTexts(uuid string, requestedTexts []string) (texts map[string]string, err error) {
+	return s.store.GetNodeTexts(uuid, s.name, requestedTexts)
+}
+
+func (s *Transaction) GetNodeBlobs(uuid string, requestedBlobs []string, fn func(string, io.Reader) error) error {
+	return s.store.GetNodeBlobs(uuid, s.name, requestedBlobs, fn)
+}
+*/
+
+/*
 type Store interface {
-
-	// rollback the actions since the last successfull commit
 	Rollback() error
+	SaveNodeProperties(uuid string, props map[string]interface{}) error
+	SaveNodeTexts(uuid string, texts map[string]string) error
+	SaveNodeBlobs(uuid string, blobs map[string]io.Reader) error
+	SaveEdges(category, fromUUID string, edges map[string]string) error
+	RemoveEdges(category, fromUUID string) error
+	GetEdges(category, fromUUID string) (edges map[string]string, err error)
+	RemoveNode(uuid string) error
+	GetNodeProperties(uuid string, requestedProps []string) (props map[string]interface{}, err error)
+	GetNodeTexts(uuid string, requestedTexts []string) (texts map[string]string, err error)
+	GetNodeBlobs(uuid string, requestedBlobs []string, fn func(string, io.Reader) error) error
+	Commit(comment string) error
+	Shard() string
+}
+*/
 
+type Transaction interface {
 	// only the props that have a key set are going to be changed
-	SaveNodeProperties(uuid string, shard string, props map[string]interface{}) error
+	SaveNodeProperties(uuid string, props map[string]interface{}) error
 
 	// map relname => nodeUuid, only the texts that have a key set are going to be changed
-	SaveNodeTexts(uuid string, shard string, texts map[string]string) error
+	SaveNodeTexts(uuid string, texts map[string]string) error
 
 	// map poolname => []nodeUuid, only the blobs that have a key set are going to be changed
-	SaveNodeBlobs(uuid string, shard string, blobs map[string]io.Reader) error
+	SaveNodeBlobs(uuid string, blobs map[string]io.Reader) error
 
-	SaveEdges(category, fromShard, fromUUID string, edges map[string]string) error
+	SaveEdges(category, fromUUID string, edges map[string]string) error
 
-	RemoveEdges(category, fromShard, fromUUID string) error
+	RemoveEdges(category, fromUUID string) error
 
-	GetEdges(category, fromShard, fromUUID string) (edges map[string]string, err error)
+	GetEdges(category, fromUUID string) (edges map[string]string, err error)
 
 	// remove node with properties, relations and pools
 	// references are not checked nor deleted, cascading deletes must be made from the outside
-	RemoveNode(uuid string, shard string) error
-
-	// get the node from the store. the given node contains all properties
-	// that are searched/known, e.g. the uuid
-	// all properties will be set inside the node and also the uuid it is was not already set
-	//GetNode(queryAndResult Node) error
-
-	// maybe just make queries part of an index and not part of the store
+	RemoveNode(uuid string) error
 
 	// only the properties that exist make it into the returned map
 	// it is no error if a requested property does not exist for a node
 	// the caller has to check the returned map against the requested props if
 	// she wants to check, if all requested properties have been returned
-	GetNodeProperties(uuid string, shard string, requestedProps []string) (props map[string]interface{}, err error)
+	GetNodeProperties(uuid string, requestedProps []string) (props map[string]interface{}, err error)
 
 	// the returned map has as values the uuids of the nodes
 	// only the relations that exist make it into the returned map
@@ -52,7 +114,7 @@ type Store interface {
 	// she wants to check, if all requested relations have been returned
 	// also there is no guarantee that the nodes which uuids are returned do still exist.
 	// there must be wrappers put around the store to ensure this (preferably by using indices)
-	GetNodeTexts(uuid string, shard string, requestedTexts []string) (texts map[string]string, err error)
+	GetNodeTexts(uuid string, requestedTexts []string) (texts map[string]string, err error)
 
 	// the returned map has as values slices of uuids of the nodes
 	// only the pools that exist make it into the returned map
@@ -61,30 +123,15 @@ type Store interface {
 	// she wants to check, if all requested pools have been returned
 	// also there is no guarantee that the nodes which uuids are returned do still exist.
 	// there must be wrappers put around the store to ensure this (preferably by using indices)
-	// GetNodeBlobs(uuid string, shard string, requestedBlobs []string) (pools map[string]io.Reader, err error)
-	GetNodeBlobs(uuid string, shard string, requestedBlobs []string, fn func(string, io.Reader) error) error
+	// GetNodeBlobs(uuid string,  requestedBlobs []string) (pools map[string]io.Reader, err error)
+	GetNodeBlobs(uuid string, requestedBlobs []string, fn func(string, io.Reader) error) error
+	Shard() string
+}
 
+type Store interface {
+	Transaction
+	// rollback the actions since the last successfull commit
+	Rollback() error
 	// save the changes in the db
 	Commit(comment string) error
-
-	// GetNodes returns all nodes that conform to the given query, where
-	// each query node is combined by OR whereas each Nodes properties and relations are combined
-	// by and AND
-	// properties and relations set to nil are considered as: must have property/relation, but with no defined
-	// value
-	// more complex query must be constructed via special indices that are queried
-	// maybe just make queries part of an index and not part of the store
-	// GetNodes(query ...Node) ([]Node, error)
-
-	/*
-		// GetPool returns a pool based on its uuid
-		GetPool(uuid string) (*Pool, error)
-
-		// SavePool saves the given pool based on its uuid
-		SavePool(*Pool) error
-
-		// removes the given node and returns any error
-		RemovePool(Node) error
-	*/
-
 }

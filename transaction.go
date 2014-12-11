@@ -9,20 +9,24 @@ package zoom
 // stops and the transaction is rolled back and the error is returned
 // if err is not nil and rolledback=false then you're in trouble:
 // the transaction did not complete and the rollback wasn't successfull either
-func Transaction(store Store, comment string, actions ...func(Store) error) (rolledback bool, err error) {
+// func (s *Shard) Transaction(comment string, actions ...func(Store) error) (rolledback bool, err error) {
+func NewTransaction(st Store, comment string, actions ...func(t Transaction) error) (err error) {
+
 	for _, a := range actions {
-		err = a(store)
+		err = a(st)
 		if err != nil {
-			rollBackErr := store.Rollback()
-			rolledback = rollBackErr == nil
+			// rollBackErr := store.Rollback()
+			// rolledback = rollBackErr == nil
+			st.Rollback()
 			return
 		}
 	}
 
-	err = store.Commit(comment)
+	err = st.Commit(comment)
 	if err != nil {
-		rollBackErr := store.Rollback()
-		rolledback = rollBackErr == nil
+		// rollBackErr := store.Rollback()
+		// rolledback = rollBackErr == nil
+		st.Rollback()
 	}
 	return
 }

@@ -16,24 +16,28 @@ func NewEdge(category string, from, to, properties *Node) *Edge {
 	}
 }
 
-func (e *Edge) Save(st Store) error {
-	edges, err := st.GetEdges(e.Category, e.From.Shard, e.From.UUID)
+func (e *Edge) Save() error {
+	edges, err := e.From.Transaction.GetEdges(e.Category, e.From.id)
 	if err != nil {
 		return err
 	}
-	edges[e.To.ID()] = e.Properties.ID()
-	return st.SaveEdges(e.Category, e.From.Shard, e.From.UUID, edges)
+	if e.Properties != nil {
+		edges[e.To.Transaction.Shard()+"-"+e.To.id] = e.Properties.id
+	} else {
+		edges[e.To.Transaction.Shard()+"-"+e.To.id] = ""
+	}
+	return e.From.Transaction.SaveEdges(e.Category, e.From.id, edges)
 }
 
 // Remove only removes the Edge entry inside the from node edges, but not the property node of the edges
-func (e *Edge) Remove(st Store) error {
-	edges, err := st.GetEdges(e.Category, e.From.Shard, e.From.UUID)
+func (e *Edge) Remove() error {
+	edges, err := e.From.Transaction.GetEdges(e.Category, e.From.id)
 	if err != nil {
 		return err
 	}
-	delete(edges, e.To.ID())
+	delete(edges, e.To.Transaction.Shard()+"-"+e.To.id)
 	if len(edges) == 0 {
-		return st.RemoveEdges(e.Category, e.From.Shard, e.From.UUID)
+		return e.From.Transaction.RemoveEdges(e.Category, e.From.id)
 	}
-	return st.SaveEdges(e.Category, e.From.Shard, e.From.UUID, edges)
+	return e.From.Transaction.SaveEdges(e.Category, e.From.id, edges)
 }

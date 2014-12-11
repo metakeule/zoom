@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/blevesearch/bleve"
 	"github.com/metakeule/gitlib"
 	"github.com/metakeule/zoom"
 	// "gopkg.in/vmihailenco/msgpack.v1"
@@ -17,6 +18,8 @@ import (
 /*
 TODO implement sharding, i.e. add a layer on top, fullfilling the zoom.Store interface
 and saving on the correspondig shard. (and add synchronization)
+
+TODO check transactions  with indices!!!
 */
 
 func FileExists(name string) bool {
@@ -30,51 +33,65 @@ func FileExists(name string) bool {
 
 type Git struct {
 	*gitlib.Git
+	shard string
 }
 
-func Open(baseDir string) (*Git, error) {
-	git, err := gitlib.NewGit(baseDir)
+func Open(baseDir string, shard string) (g Git, err error) {
+	// fmt.Println("opening")
+	var git *gitlib.Git
+	git, err = gitlib.NewGit(baseDir)
+
 	if err != nil {
-		return nil, err
+		return
 	}
 	if !git.IsInitialized() {
 		// fmt.Println("initializing")
-		err := git.Transaction(func(tx *gitlib.Transaction) error {
+		err = git.Transaction(func(tx *gitlib.Transaction) error {
 			if err := tx.InitWithReadme(strings.NewReader("first commit")); err != nil {
 				return err
 			}
 			return nil
 		})
 		if err != nil {
-			return nil, err
-		}
-	}
-	return &Git{git}, nil
-}
-
-func (g *Git) Transaction(comment string, actions ...func(zoom.Store) error) (rolledback bool, err error) {
-	err = g.Git.Transaction(func(tx *gitlib.Transaction) (err2 error) {
-		if err2 = tx.InitWithReadme(strings.NewReader("create zoomDB")); err2 != nil {
 			return
 		}
-
-		var store zoom.Store = &Store{tx}
-
-		rolledback, err2 = zoom.Transaction(store, comment, actions...)
-		return
-	})
+	}
+	g = Git{Git: git, shard: shard}
 	return
+}
+
+func (g *Git) indexPath(indexpath string) string {
+	return fmt.Sprintf("index/%s/%s", g.shard, indexpath)
+}
+
+func (g *Git) Index(indexpath string) (bleve.Index, error) {
+	p := filepath.Join(g.Git.Dir, g.indexPath(indexpath))
+	if FileExists(p) {
+		return bleve.Open(p)
+	}
+	os.MkdirAll(filepath.Dir(p), 0755)
+
+	mapping := bleve.NewIndexMapping()
+	return bleve.New(p, mapping)
+}
+
+func (g *Git) Transaction(comment string, actions ...func(zoom.Transaction) error) (err error) {
+	return g.Git.Transaction(func(tx *gitlib.Transaction) error {
+		var store zoom.Store = &Store{tx, g.shard}
+		return zoom.NewTransaction(store, comment, actions...)
+	})
 }
 
 type Store struct {
 	*gitlib.Transaction
+	shard string
 }
 
 // map relname => nodeUuid, only the texts that have a key set are going to be changed
-func (s *Store) SaveNodeTexts(uuid string, shard string, texts map[string]string) error {
+func (s *Store) SaveNodeTexts(uuid string, texts map[string]string) error {
 
 	for textPath, text := range texts {
-		path := s.textPath(shard, uuid, textPath)
+		path := s.textPath(uuid, textPath)
 
 		known, err := s.IsFileKnown(path)
 
@@ -102,6 +119,8 @@ func (s *Store) SaveNodeTexts(uuid string, shard string, texts map[string]string
 }
 
 func (s *Store) saveBlobToFile(path string, blob io.Reader) error {
+	dir := filepath.Dir(path)
+	os.MkdirAll(dir, 0755)
 	file, err := os.Create(path)
 
 	if err != nil {
@@ -131,10 +150,10 @@ func (s *Store) saveBlobToFile(path string, blob io.Reader) error {
 }
 
 // map poolname => []nodeUuid, only the blobs that have a key set are going to be changed
-func (s *Store) SaveNodeBlobs(uuid string, shard string, blobs map[string]io.Reader) error {
+func (s *Store) SaveNodeBlobs(uuid string, blobs map[string]io.Reader) error {
 
 	for blobPath, blob := range blobs {
-		path := filepath.Join(s.Git.Dir, s.blobPath(shard, uuid, blobPath))
+		path := filepath.Join(s.Git.Dir, s.blobPath(uuid, blobPath))
 		if err := s.saveBlobToFile(path, blob); err != nil {
 			return err
 		}
@@ -142,8 +161,19 @@ func (s *Store) SaveNodeBlobs(uuid string, shard string, blobs map[string]io.Rea
 	return nil
 }
 
-func (s *Store) callwithBlob(uuid string, shard string, blobPath string, fn func(string, io.Reader) error) error {
-	path := filepath.Join(s.Git.Dir, s.blobPath(shard, uuid, blobPath))
+/*
+func (s *Store) SaveIndex(indexpath string, shard string, rd io.Reader) error {
+	path := filepath.Join(s.Git.Dir, s.indexPath(shard, indexpath))
+	return s.saveBlobToFile(path, rd)
+}
+*/
+
+/*
+
+*/
+
+func (s *Store) callwithBlob(uuid string, blobPath string, fn func(string, io.Reader) error) error {
+	path := filepath.Join(s.Git.Dir, s.blobPath(uuid, blobPath))
 	if FileExists(path) {
 		file, err := os.Open(path)
 		if err != nil {
@@ -156,10 +186,26 @@ func (s *Store) callwithBlob(uuid string, shard string, blobPath string, fn func
 	return nil
 }
 
+/*
+func (s *Store) GetIndex(indexpath string, shard string, fn func(io.Reader) error) error {
+	path := filepath.Join(s.Git.Dir, s.indexPath(shard, indexpath))
+	if FileExists(path) {
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+
+		return fn(file)
+	}
+	return nil
+}
+*/
+
 // GetNodeBlobs calls fn for each existing blob in requestedBlobs
-func (s *Store) GetNodeBlobs(uuid string, shard string, requestedBlobs []string, fn func(string, io.Reader) error) error {
+func (s *Store) GetNodeBlobs(uuid string, requestedBlobs []string, fn func(string, io.Reader) error) error {
 	for _, blob := range requestedBlobs {
-		err := s.callwithBlob(uuid, shard, blob, fn)
+		err := s.callwithBlob(uuid, blob, fn)
 
 		if err != nil {
 			return err
@@ -168,17 +214,19 @@ func (s *Store) GetNodeBlobs(uuid string, shard string, requestedBlobs []string,
 	return nil
 }
 
-func (s *Store) GetNodeTexts(uuid string, shard string, requestedTexts []string) (texts map[string]string, err error) {
+func (s *Store) GetNodeTexts(uuid string, requestedTexts []string) (texts map[string]string, err error) {
 	texts = map[string]string{}
 	var known bool
 	for _, text := range requestedTexts {
-		known, err = s.IsFileKnown(text)
+		known, err = s.IsFileKnown(s.textPath(uuid, text))
 		if err != nil {
 			return
 		}
+
+		// fmt.Printf("file %s is known: %v\n", text, known)
 		if known {
 			var buf bytes.Buffer
-			err = s.ReadCatHeadFile(s.textPath(shard, uuid, text), &buf)
+			err = s.ReadCatHeadFile(s.textPath(uuid, text), &buf)
 			if err != nil {
 				return
 			}
@@ -188,8 +236,8 @@ func (s *Store) GetNodeTexts(uuid string, shard string, requestedTexts []string)
 	return
 }
 
-func (s *Store) SaveEdges(category, shard, uuid string, edges map[string]string) error {
-	path := s.edgePath(category, shard, uuid)
+func (s *Store) SaveEdges(category, uuid string, edges map[string]string) error {
+	path := s.edgePath(category, uuid)
 	known, err := s.IsFileKnown(path)
 	if err != nil {
 		return err
@@ -199,30 +247,25 @@ func (s *Store) SaveEdges(category, shard, uuid string, edges map[string]string)
 
 // RemoveEdges also removes the properties node of an edge
 // Is the edges file is already removed, no error should be returned
-func (s *Store) RemoveEdges(category, shard, uuid string) error {
-	edges, err := s.GetEdges(category, shard, uuid)
+func (s *Store) RemoveEdges(category, uuid string) error {
+	edges, err := s.GetEdges(category, uuid)
 	if err != nil {
 		return err
 	}
 
-	for _, propNode := range edges {
-		shard, uuid, err := zoom.SplitID(propNode)
-		if err != nil {
-			return err
-		}
-
-		if err := s.RemoveNode(uuid, shard); err != nil {
+	for _, propID := range edges {
+		if err := s.RemoveNode(propID); err != nil {
 			return err
 		}
 	}
 
-	path := s.edgePath(category, shard, uuid)
+	path := s.edgePath(category, uuid)
 	return s.RmIndex(path)
 }
 
 // if there is no edge file for the given category, no error is returned, but empty  edges map
-func (s *Store) GetEdges(category, shard, uuid string) (edges map[string]string, err error) {
-	path := s.edgePath(category, shard, uuid)
+func (s *Store) GetEdges(category, uuid string) (edges map[string]string, err error) {
+	path := s.edgePath(category, uuid)
 	edges = map[string]string{}
 
 	known, err := s.IsFileKnown(path)
@@ -233,30 +276,31 @@ func (s *Store) GetEdges(category, shard, uuid string) (edges map[string]string,
 	if !known {
 		return edges, nil
 	}
-	err = s.load(path, edges)
+	err = s.load(path, &edges)
 	return edges, err
 }
 
-func (s *Store) edgePath(category string, shard string, uuid string) string {
+func (s *Store) edgePath(category string, uuid string) string {
 	//return fmt.Sprintf("node/props/%s/%s", uuid[:2], uuid[2:])
-	return fmt.Sprintf("refs/%s/%s/%s/%s", category, shard, uuid[:2], uuid[2:])
+	return fmt.Sprintf("refs/%s/%s/%s/%s", category, s.shard, uuid[:2], uuid[2:])
 }
 
-func (s *Store) propPath(shard string, uuid string) string {
+func (s *Store) propPath(uuid string) string {
 	//return fmt.Sprintf("node/props/%s/%s", uuid[:2], uuid[2:])
-	return fmt.Sprintf("node/%s/%s/%s", shard, uuid[:2], uuid[2:])
+	return fmt.Sprintf("node/%s/%s/%s", s.shard, uuid[:2], uuid[2:])
 }
 
-func (s *Store) textPath(shard string, uuid string, key string) string {
+func (s *Store) textPath(uuid string, key string) string {
 	// return fmt.Sprintf("node/rels/%s/%s", uuid[:2], uuid[2:])
-	return fmt.Sprintf("text/%s/%s/%s/%s", shard, uuid[:2], uuid[2:], key)
+	return fmt.Sprintf("text/%s/%s/%s/%s", s.shard, uuid[:2], uuid[2:], key)
 }
 
-func (s *Store) blobPath(shard string, uuid string, blobpath string) string {
-	return fmt.Sprintf("blob/%s/%s/%s/%s", shard, uuid[:2], uuid[2:], blobpath)
+func (s *Store) blobPath(uuid string, blobpath string) string {
+	return fmt.Sprintf("blob/%s/%s/%s/%s", s.shard, uuid[:2], uuid[2:], blobpath)
 }
 
 func (g *Store) Commit(comment string) error {
+	// fmt.Println("commit from store " + comment)
 	treeSha, err := g.Transaction.WriteTree()
 	if err != nil {
 		return err
@@ -264,6 +308,7 @@ func (g *Store) Commit(comment string) error {
 
 	var parent string
 	parent, err = g.ShowHeadsRef("master")
+	// fmt.Println("parent commit is: " + parent)
 	if err != nil {
 		return err
 	}
@@ -305,9 +350,11 @@ func (g *Store) save(path string, isNew bool, data interface{}) error {
 }
 
 func (g *Store) load(path string, data interface{}) error {
+	// fmt.Println("loading from ", path)
 	var buf bytes.Buffer
 	err := g.Transaction.ReadCatHeadFile(path, &buf)
 	if err != nil {
+		fmt.Println(err)
 		return err
 	}
 	//dec := msgpack.NewDecoder(&buf)
@@ -317,8 +364,8 @@ func (g *Store) load(path string, data interface{}) error {
 
 // only the props that have a key set are going to be changed
 // if no node properties file does exist, no error should be returned and s.save(....isNew) should be used
-func (g *Store) SaveNodeProperties(uuid string, shard string, props map[string]interface{}) error {
-	path := g.propPath(shard, uuid)
+func (g *Store) SaveNodeProperties(uuid string, props map[string]interface{}) error {
+	path := g.propPath(uuid)
 
 	known, err := g.IsFileKnown(path)
 	if err != nil {
@@ -358,16 +405,16 @@ func (g *Store) Rollback() error {
 // ls refs/*/shard/uuid[:2], uuid[2:]
 // return fmt.Sprintf("refs/%s/%s/%s/%s", category, shard, uuid[:2], uuid[2:])
 // if any file does not exist, no error should be returned
-func (g *Store) RemoveNode(uuid string, shard string) error {
+func (g *Store) RemoveNode(uuid string) error {
 	// fmt.Printf("trying to remove node: uuid %#v shard %#v\n", uuid, shard)
 	// fmt.Println("proppath is ", g.propPath(shard, uuid))
 	paths := []string{
-		g.propPath(shard, uuid),
-		fmt.Sprintf("text/%s/%s/%s", shard, uuid[:2], uuid[2:]),
-		fmt.Sprintf("blob/%s/%s/%s", shard, uuid[:2], uuid[2:]),
+		g.propPath(uuid),
+		fmt.Sprintf("text/%s/%s/%s", g.shard, uuid[:2], uuid[2:]),
+		fmt.Sprintf("blob/%s/%s/%s", g.shard, uuid[:2], uuid[2:]),
 	}
 
-	files, err := g.LsFiles(fmt.Sprintf("refs/*/%s/%s/%s", shard, uuid[:2], uuid[2:]))
+	files, err := g.LsFiles(fmt.Sprintf("refs/*/%s/%s/%s", g.shard, uuid[:2], uuid[2:]))
 	if err != nil {
 		// fmt.Println("error from ls files")
 		return err
@@ -401,8 +448,8 @@ func (g *Store) RemoveNode(uuid string, shard string) error {
 // the caller has to check the returned map against the requested props if
 // she wants to check, if all requested properties have been returned
 // if the node properties file is not there no error should be returned
-func (g *Store) GetNodeProperties(uuid string, shard string, requestedProps []string) (props map[string]interface{}, err error) {
-	path := g.propPath(shard, uuid)
+func (g *Store) GetNodeProperties(uuid string, requestedProps []string) (props map[string]interface{}, err error) {
+	path := g.propPath(uuid)
 	orig := map[string]interface{}{}
 	err = g.load(path, &orig)
 	if err != nil {
@@ -417,4 +464,8 @@ func (g *Store) GetNodeProperties(uuid string, shard string, requestedProps []st
 		}
 	}
 	return
+}
+
+func (g *Store) Shard() string {
+	return g.shard
 }
