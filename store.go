@@ -1,7 +1,5 @@
 package zoom
 
-import "io"
-
 /*
 	props map[string]interface{}   // saved in nodes file
 	texts map[string]string        // saved in each file for a text (text is string lenghth > 255) texts are always UTF-8, \n
@@ -89,7 +87,7 @@ type Transaction interface {
 	SaveNodeTexts(uuid string, texts map[string]string) error
 
 	// map poolname => []nodeUuid, only the blobs that have a key set are going to be changed
-	SaveNodeBlobs(uuid string, blobs map[string]io.Reader) error
+	// SaveNodeBlobs(uuid string, blobs map[string]io.Reader) error
 
 	SaveEdges(category, fromUUID string, edges map[string]string) error
 
@@ -124,7 +122,7 @@ type Transaction interface {
 	// also there is no guarantee that the nodes which uuids are returned do still exist.
 	// there must be wrappers put around the store to ensure this (preferably by using indices)
 	// GetNodeBlobs(uuid string,  requestedBlobs []string) (pools map[string]io.Reader, err error)
-	GetNodeBlobs(uuid string, requestedBlobs []string, fn func(string, io.Reader) error) error
+	// GetNodeBlobs(uuid string, requestedBlobs []string, fn func(string, io.Reader) error) error
 	Shard() string
 }
 
@@ -133,5 +131,5 @@ type Store interface {
 	// rollback the actions since the last successfull commit
 	Rollback() error
 	// save the changes in the db
-	Commit(comment string) error
+	Commit(CommitMessage) error
 }

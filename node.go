@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-contrib/uuid"
+	"gopkg.in/go-on/go.uuid.v1"
 )
 
 type Node struct {
@@ -63,6 +63,7 @@ func (n *Node) LoadTexts(requestedTexts []string) (err error) {
 	return nil
 }
 
+/*
 func (n *Node) LoadBlobs(requestedBlobs []string, fn func(string, io.Reader) error) (err error) {
 	if len(requestedBlobs) > 0 {
 		err := n.Transaction.GetNodeBlobs(n.id, requestedBlobs, fn)
@@ -72,6 +73,7 @@ func (n *Node) LoadBlobs(requestedBlobs []string, fn func(string, io.Reader) err
 	}
 	return nil
 }
+*/
 
 func SplitID(id string) (shard, uuid string, err error) {
 	pos := strings.Index(id, "-")
@@ -185,7 +187,34 @@ func (n *Node) GetStrings(prop string) []string {
 	return n.props[prop].([]string)
 }
 */
-func (n *Node) GetTime(prop string) time.Time { return n.props[prop].(time.Time) }
+func (n *Node) GetTime(prop string) *time.Time {
+	t, has := n.props[prop]
+	if !has {
+		// fmt.Println("has no", prop, n.props)
+		return nil
+	}
+
+	if t == nil {
+		return nil
+	}
+
+	tt := t.(string)
+
+	ttt, err := time.Parse(time.RFC3339, tt)
+	if err != nil {
+		return nil
+	}
+
+	return &ttt
+	/*
+		if !ok {
+			fmt.Println("can't parse", tt)
+			return nil
+		}
+		return tt
+	*/
+	// return n.props[prop].(time.Time)
+}
 
 /*
 func (n *Node) GetTimes(prop string) []time.Time {
@@ -273,7 +302,7 @@ func (o *Node) SetStrings(prop string, vals ...string) error {
 }
 */
 
-func (o *Node) SetTime(prop string, val time.Time) {
+func (o *Node) SetTime(prop string, val *time.Time) {
 	o.dirty[prop] = true
 	o.props[prop] = val
 }
@@ -308,6 +337,7 @@ func (n *Node) SaveTexts() (err error) {
 	return nil
 }
 
+/*
 func (n *Node) SaveBlobs() (err error) {
 	saveBlobs := map[string]io.Reader{}
 
@@ -330,9 +360,11 @@ func (n *Node) SaveBlobs() (err error) {
 
 	return nil
 }
+*/
 
 func (n *Node) Save() (err error) {
-	saveProps, saveTexts, saveBlobs := map[string]interface{}{}, map[string]string{}, map[string]io.Reader{}
+	//saveProps, saveTexts, saveBlobs := map[string]interface{}{}, map[string]string{}, map[string]io.Reader{}
+	saveProps, saveTexts := map[string]interface{}{}, map[string]string{}
 
 	for key, isDirty := range n.dirty {
 		if isDirty {
@@ -348,11 +380,13 @@ func (n *Node) Save() (err error) {
 				continue
 			}
 
-			blob, isBlob := n.blobs[key]
-			if isBlob {
-				saveBlobs[key] = blob
-				continue
-			}
+			/*
+				blob, isBlob := n.blobs[key]
+				if isBlob {
+					saveBlobs[key] = blob
+					continue
+				}
+			*/
 		}
 	}
 
@@ -372,13 +406,14 @@ func (n *Node) Save() (err error) {
 		}
 	}
 
-	if len(saveBlobs) > 0 {
-		err = n.Transaction.SaveNodeBlobs(n.id, saveBlobs)
-		if err != nil {
-			return err
+	/*
+		if len(saveBlobs) > 0 {
+			err = n.Transaction.SaveNodeBlobs(n.id, saveBlobs)
+			if err != nil {
+				return err
+			}
 		}
-	}
-
+	*/
 	n.dirty = map[string]bool{}
 	return nil
 }

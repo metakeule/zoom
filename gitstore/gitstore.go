@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/blevesearch/bleve"
 	"github.com/metakeule/gitlib"
 	"github.com/metakeule/zoom"
 	// "gopkg.in/vmihailenco/msgpack.v1"
@@ -38,8 +37,15 @@ type Git struct {
 
 func Open(baseDir string, shard string) (g Git, err error) {
 	// fmt.Println("opening")
+
+	gitBase := filepath.Join(baseDir, ".git")
+
+	// ignoring error because gitBase might already exist
+	// println("creating " + gitBase)
+	os.Mkdir(gitBase, 0755)
+
 	var git *gitlib.Git
-	git, err = gitlib.NewGit(baseDir)
+	git, err = gitlib.NewGit(gitBase)
 
 	if err != nil {
 		return
@@ -47,10 +53,42 @@ func Open(baseDir string, shard string) (g Git, err error) {
 	if !git.IsInitialized() {
 		// fmt.Println("initializing")
 		err = git.Transaction(func(tx *gitlib.Transaction) error {
-			if err := tx.InitWithReadme(strings.NewReader("first commit")); err != nil {
+			if err := tx.InitBare(); err != nil {
 				return err
 			}
-			return nil
+			/*
+				sha1, err := tx.WriteHashObject(strings.NewReader("index\nblob\n"))
+				if err != nil {
+					return err
+				}
+
+				err = tx.AddIndexCache(sha1, ".gitignore")
+				if err != nil {
+					return err
+				}
+			*/
+			sha1, err := tx.WriteHashObject(strings.NewReader("ZOOM DATABASE\nThis is a zoom database.\nDon't write into this directory manually.\nUse the zoom database library instead.\n"))
+			if err != nil {
+				return err
+			}
+
+			err = tx.AddIndexCache(sha1, "README")
+			if err != nil {
+				return err
+			}
+
+			sha1, err = tx.WriteTree()
+			if err != nil {
+				return err
+			}
+
+			sha1, err = tx.CommitTree(sha1, "", strings.NewReader("add README"))
+			if err != nil {
+				return err
+			}
+
+			return tx.UpdateHeadsRef("master", sha1)
+
 		})
 		if err != nil {
 			return
@@ -60,25 +98,10 @@ func Open(baseDir string, shard string) (g Git, err error) {
 	return
 }
 
-func (g *Git) indexPath(indexpath string) string {
-	return fmt.Sprintf("index/%s/%s", g.shard, indexpath)
-}
-
-func (g *Git) Index(indexpath string) (bleve.Index, error) {
-	p := filepath.Join(g.Git.Dir, g.indexPath(indexpath))
-	if FileExists(p) {
-		return bleve.Open(p)
-	}
-	os.MkdirAll(filepath.Dir(p), 0755)
-
-	mapping := bleve.NewIndexMapping()
-	return bleve.New(p, mapping)
-}
-
-func (g *Git) Transaction(comment string, actions ...func(zoom.Transaction) error) (err error) {
+func (g *Git) Transaction(msg zoom.CommitMessage, action func(zoom.Transaction) error) (err error) {
 	return g.Git.Transaction(func(tx *gitlib.Transaction) error {
 		var store zoom.Store = &Store{tx, g.shard}
-		return zoom.NewTransaction(store, comment, actions...)
+		return zoom.NewTransaction(store, msg, action)
 	})
 }
 
@@ -149,17 +172,19 @@ func (s *Store) saveBlobToFile(path string, blob io.Reader) error {
 	return nil
 }
 
+/*
 // map poolname => []nodeUuid, only the blobs that have a key set are going to be changed
 func (s *Store) SaveNodeBlobs(uuid string, blobs map[string]io.Reader) error {
 
 	for blobPath, blob := range blobs {
-		path := filepath.Join(s.Git.Dir, s.blobPath(uuid, blobPath))
+		path := filepath.Join(s.Git.Dir, s.BlobPath(uuid, blobPath))
 		if err := s.saveBlobToFile(path, blob); err != nil {
 			return err
 		}
 	}
 	return nil
 }
+*/
 
 /*
 func (s *Store) SaveIndex(indexpath string, shard string, rd io.Reader) error {
@@ -172,6 +197,7 @@ func (s *Store) SaveIndex(indexpath string, shard string, rd io.Reader) error {
 
 */
 
+/*
 func (s *Store) callwithBlob(uuid string, blobPath string, fn func(string, io.Reader) error) error {
 	path := filepath.Join(s.Git.Dir, s.blobPath(uuid, blobPath))
 	if FileExists(path) {
@@ -185,6 +211,7 @@ func (s *Store) callwithBlob(uuid string, blobPath string, fn func(string, io.Re
 	}
 	return nil
 }
+*/
 
 /*
 func (s *Store) GetIndex(indexpath string, shard string, fn func(io.Reader) error) error {
@@ -203,6 +230,7 @@ func (s *Store) GetIndex(indexpath string, shard string, fn func(io.Reader) erro
 */
 
 // GetNodeBlobs calls fn for each existing blob in requestedBlobs
+/*
 func (s *Store) GetNodeBlobs(uuid string, requestedBlobs []string, fn func(string, io.Reader) error) error {
 	for _, blob := range requestedBlobs {
 		err := s.callwithBlob(uuid, blob, fn)
@@ -213,6 +241,7 @@ func (s *Store) GetNodeBlobs(uuid string, requestedBlobs []string, fn func(strin
 	}
 	return nil
 }
+*/
 
 func (s *Store) GetNodeTexts(uuid string, requestedTexts []string) (texts map[string]string, err error) {
 	texts = map[string]string{}
@@ -295,11 +324,11 @@ func (s *Store) textPath(uuid string, key string) string {
 	return fmt.Sprintf("text/%s/%s/%s/%s", s.shard, uuid[:2], uuid[2:], key)
 }
 
-func (s *Store) blobPath(uuid string, blobpath string) string {
-	return fmt.Sprintf("blob/%s/%s/%s/%s", s.shard, uuid[:2], uuid[2:], blobpath)
+func (s *Store) BlobPath(uuid string, blobpath string) string {
+	return fmt.Sprintf("../blob/%s/%s/%s/%s", s.shard, uuid[:2], uuid[2:], blobpath)
 }
 
-func (g *Store) Commit(comment string) error {
+func (g *Store) Commit(msg zoom.CommitMessage) error {
 	// fmt.Println("commit from store " + comment)
 	treeSha, err := g.Transaction.WriteTree()
 	if err != nil {
@@ -314,7 +343,7 @@ func (g *Store) Commit(comment string) error {
 	}
 
 	var commitSha string
-	commitSha, err = g.CommitTree(treeSha, parent, strings.NewReader(comment))
+	commitSha, err = g.CommitTree(treeSha, parent, strings.NewReader(msg.String()))
 
 	if err != nil {
 		return err
@@ -324,6 +353,7 @@ func (g *Store) Commit(comment string) error {
 }
 
 func (g *Store) save(path string, isNew bool, data interface{}) error {
+	// fmt.Printf("storing: %#v in %#v\n", data, path)
 	var buf bytes.Buffer
 	// enc := msgpack.NewEncoder(&buf)
 	enc := json.NewEncoder(&buf)
@@ -332,6 +362,7 @@ func (g *Store) save(path string, isNew bool, data interface{}) error {
 		return err
 	}
 
+	// fmt.Println("result", buf.String())
 	var sha1 string
 	sha1, err = g.Transaction.WriteHashObject(&buf)
 	if err != nil {
@@ -357,6 +388,8 @@ func (g *Store) load(path string, data interface{}) error {
 		fmt.Println(err)
 		return err
 	}
+
+	// fmt.Println("reading", buf.String())
 	//dec := msgpack.NewDecoder(&buf)
 	dec := json.NewDecoder(&buf)
 	return dec.Decode(data)

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/metakeule/config"
+	"gopkg.in/metakeule/config.v1"
 	"github.com/metakeule/zoom"
 	"github.com/metakeule/zoom/gitstore"
 )
