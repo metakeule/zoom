@@ -17,27 +17,27 @@ func NewEdge(category string, from, to, properties *Node) *Edge {
 }
 
 func (e *Edge) Save() error {
-	edges, err := e.From.Transaction.GetEdges(e.Category, e.From.id)
+	edges, err := e.From.Transaction.GetEdges(e.Category, e.From.Id)
 	if err != nil {
 		return err
 	}
 	if e.Properties != nil {
-		edges[e.To.Transaction.Shard()+"-"+e.To.id] = e.Properties.id
+		edges[e.To.Transaction.Shard()+"-"+e.To.Id] = e.Properties.Id
 	} else {
-		edges[e.To.Transaction.Shard()+"-"+e.To.id] = ""
+		edges[e.To.Transaction.Shard()+"-"+e.To.Id] = ""
 	}
-	return e.From.Transaction.SaveEdges(e.Category, e.From.id, edges)
+	return e.From.Transaction.SaveEdges(e.Category, e.From.Id, edges)
 }
 
 // Remove only removes the Edge entry inside the from node edges, but not the property node of the edges
 func (e *Edge) Remove() error {
-	edges, err := e.From.Transaction.GetEdges(e.Category, e.From.id)
+	edges, err := e.From.Transaction.GetEdges(e.Category, e.From.Id)
 	if err != nil {
 		return err
 	}
-	delete(edges, e.To.Transaction.Shard()+"-"+e.To.id)
+	delete(edges, e.To.Transaction.Shard()+"-"+e.To.Id)
 	if len(edges) == 0 {
-		return e.From.Transaction.RemoveEdges(e.Category, e.From.id)
+		return e.From.Transaction.RemoveEdges(e.Category, e.From.Id)
 	}
-	return e.From.Transaction.SaveEdges(e.Category, e.From.id, edges)
+	return e.From.Transaction.SaveEdges(e.Category, e.From.Id, edges)
 }

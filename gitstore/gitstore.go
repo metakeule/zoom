@@ -38,11 +38,12 @@ type Git struct {
 func Open(baseDir string, shard string) (g Git, err error) {
 	// fmt.Println("opening")
 
-	gitBase := filepath.Join(baseDir, ".git")
+	//gitBase := filepath.Join(baseDir, ".git")
+	gitBase := baseDir
 
 	// ignoring error because gitBase might already exist
 	// println("creating " + gitBase)
-	os.Mkdir(gitBase, 0755)
+	// os.Mkdir(gitBase, 0755)
 
 	var git *gitlib.Git
 	git, err = gitlib.NewGit(gitBase)
@@ -53,7 +54,9 @@ func Open(baseDir string, shard string) (g Git, err error) {
 	if !git.IsInitialized() {
 		// fmt.Println("initializing")
 		err = git.Transaction(func(tx *gitlib.Transaction) error {
-			if err := tx.InitBare(); err != nil {
+			// we got problems with rm --cached and ls-files therefor we prefer to not
+			// use bare repositories for now
+			if err := tx.Init(); err != nil {
 				return err
 			}
 			/*
@@ -289,7 +292,7 @@ func (s *Store) RemoveEdges(category, uuid string) error {
 	}
 
 	path := s.edgePath(category, uuid)
-	return s.RmIndex(path)
+	return s.RemoveIndex(path)
 }
 
 // if there is no edge file for the given category, no error is returned, but empty  edges map
@@ -440,9 +443,8 @@ func (g *Store) Rollback() error {
 // if any file does not exist, no error should be returned
 func (g *Store) RemoveNode(uuid string) error {
 	// fmt.Printf("trying to remove node: uuid %#v shard %#v\n", uuid, shard)
-	// fmt.Println("proppath is ", g.propPath(shard, uuid))
+	// fmt.Println("proppath is ", g.propPath(uuid))
 	paths := []string{
-		g.propPath(uuid),
 		fmt.Sprintf("text/%s/%s/%s", g.shard, uuid[:2], uuid[2:]),
 		fmt.Sprintf("blob/%s/%s/%s", g.shard, uuid[:2], uuid[2:]),
 	}
@@ -454,24 +456,39 @@ func (g *Store) RemoveNode(uuid string) error {
 	}
 
 	for _, file := range files {
-		err := g.Transaction.RmIndex(file)
+
+		err := g.Transaction.RemoveIndex(file)
 		if err != nil {
-			// fmt.Printf("can't remove index: %#v\n", file)
 			return err
 		}
 	}
 
 	for _, path := range paths {
-		known, err := g.IsFileKnown(path)
+		files, err := g.LsFiles(fmt.Sprintf("%s/*", path))
 		if err != nil {
+			// fmt.Println("error from ls files")
 			return err
 		}
-		if known {
-			err := g.Transaction.RmIndex(path)
+
+		for _, file := range files {
+			// fmt.Printf("trying to remove file: %#v\n", file)
+			known, err := g.IsFileKnown(file)
 			if err != nil {
+				// fmt.Printf("can't remove index: %#v\n", file)
 				return err
 			}
+			if known {
+				err := g.Transaction.RemoveIndex(file)
+				if err != nil {
+					return err
+				}
+			}
 		}
+	}
+
+	err = g.Transaction.RemoveIndex(g.propPath(uuid))
+	if err != nil {
+		return err
 	}
 	return nil
 }

@@ -10,9 +10,9 @@ import (
 )
 
 type Node struct {
-	id string
+	Id string `json:",omitempty"`
 	// Shard string
-	Transaction Transaction
+	Transaction Transaction            `json:"-"`
 	props       map[string]interface{} // saved in nodes file
 	texts       map[string]string      // saved in each file for a text (text is string lenghth > 255) texts are always UTF-8, \n
 	blobs       map[string]io.Reader   // saved outside the repo inside the working dir (will be synced via rsync), blobpath must begin with mimetype
@@ -30,7 +30,7 @@ func (n *Node) Shard() string {
 func (n *Node) LoadProperties(requestedProps []string) (err error) {
 	// fmt.Println("loading properties")
 	if len(requestedProps) > 0 {
-		props, err := n.Transaction.GetNodeProperties(n.id, requestedProps)
+		props, err := n.Transaction.GetNodeProperties(n.Id, requestedProps)
 
 		if err != nil {
 			return err
@@ -47,7 +47,7 @@ func (n *Node) LoadProperties(requestedProps []string) (err error) {
 func (n *Node) LoadTexts(requestedTexts []string) (err error) {
 	// fmt.Println("loading texts")
 	if len(requestedTexts) > 0 {
-		texts, err := n.Transaction.GetNodeTexts(n.id, requestedTexts)
+		texts, err := n.Transaction.GetNodeTexts(n.Id, requestedTexts)
 
 		// fmt.Printf("texts: %#v\n", texts)
 
@@ -66,7 +66,7 @@ func (n *Node) LoadTexts(requestedTexts []string) (err error) {
 /*
 func (n *Node) LoadBlobs(requestedBlobs []string, fn func(string, io.Reader) error) (err error) {
 	if len(requestedBlobs) > 0 {
-		err := n.Transaction.GetNodeBlobs(n.id, requestedBlobs, fn)
+		err := n.Transaction.GetNodeBlobs(n.Id, requestedBlobs, fn)
 		if err != nil {
 			return err
 		}
@@ -94,7 +94,7 @@ func (n *Node) Reset() {
 }
 
 func (n *Node) ID() string {
-	return n.id
+	return n.Id
 }
 
 // NewNode creates a new node that should be handled by the given store
@@ -115,7 +115,7 @@ func NewNode(tr Transaction, id string) *Node {
 
 	n := &Node{
 		Transaction: tr,
-		id:          id,
+		Id:          id,
 	}
 
 	n.Reset()
@@ -324,7 +324,7 @@ func (n *Node) SaveTexts() (err error) {
 	}
 
 	if len(saveTexts) > 0 {
-		err = n.Transaction.SaveNodeTexts(n.id, saveTexts)
+		err = n.Transaction.SaveNodeTexts(n.Id, saveTexts)
 		if err != nil {
 			return err
 		}
@@ -348,7 +348,7 @@ func (n *Node) SaveBlobs() (err error) {
 	}
 
 	if len(saveBlobs) > 0 {
-		err = n.Transaction.SaveNodeBlobs(n.id, saveBlobs)
+		err = n.Transaction.SaveNodeBlobs(n.Id, saveBlobs)
 		if err != nil {
 			return err
 		}
@@ -365,17 +365,19 @@ func (n *Node) SaveBlobs() (err error) {
 func (n *Node) Save() (err error) {
 	//saveProps, saveTexts, saveBlobs := map[string]interface{}{}, map[string]string{}, map[string]io.Reader{}
 	saveProps, saveTexts := map[string]interface{}{}, map[string]string{}
-
+	var doSaveProps, doSaveTexts bool
 	for key, isDirty := range n.dirty {
 		if isDirty {
 			prop, isProp := n.props[key]
 			if isProp {
 				saveProps[key] = prop
+				doSaveProps = true
 				continue
 			}
 
 			text, isText := n.texts[key]
 			if isText {
+				doSaveTexts = true
 				saveTexts[key] = text
 				continue
 			}
@@ -392,15 +394,15 @@ func (n *Node) Save() (err error) {
 
 	// fmt.Printf("saveTexts: %v\n", saveTexts)
 
-	if len(saveProps) > 0 {
-		err = n.Transaction.SaveNodeProperties(n.id, saveProps)
+	if doSaveProps {
+		err = n.Transaction.SaveNodeProperties(n.Id, saveProps)
 		if err != nil {
 			return err
 		}
 	}
 
-	if len(saveTexts) > 0 {
-		err = n.Transaction.SaveNodeTexts(n.id, saveTexts)
+	if doSaveTexts {
+		err = n.Transaction.SaveNodeTexts(n.Id, saveTexts)
 		if err != nil {
 			return err
 		}
@@ -408,7 +410,7 @@ func (n *Node) Save() (err error) {
 
 	/*
 		if len(saveBlobs) > 0 {
-			err = n.Transaction.SaveNodeBlobs(n.id, saveBlobs)
+			err = n.Transaction.SaveNodeBlobs(n.Id, saveBlobs)
 			if err != nil {
 				return err
 			}
@@ -419,7 +421,7 @@ func (n *Node) Save() (err error) {
 }
 
 func (n *Node) Remove() (err error) {
-	return n.Transaction.RemoveNode(n.id)
+	return n.Transaction.RemoveNode(n.Id)
 }
 
 // NewEdge creates a new Edge to the target edge, by the way creating a property node based on the given
@@ -446,7 +448,7 @@ func (n *Node) NewEdge(category string, to *Node, props map[string]interface{}) 
 
 // RemoveEdge removes the edge of the given category, removing the property node of the edge
 func (n *Node) RemoveEdge(category string, to *Node) error {
-	edges, err := n.Transaction.GetEdges(category, n.id)
+	edges, err := n.Transaction.GetEdges(category, n.Id)
 	if err != nil {
 		return err
 	}
@@ -454,7 +456,7 @@ func (n *Node) RemoveEdge(category string, to *Node) error {
 		return nil
 	}
 
-	propID, has := edges[to.Transaction.Shard()+"-"+to.id]
+	propID, has := edges[to.Transaction.Shard()+"-"+to.Id]
 
 	if !has {
 		return nil
@@ -464,16 +466,16 @@ func (n *Node) RemoveEdge(category string, to *Node) error {
 	if err := propNode.Remove(); err != nil {
 		return err
 	}
-	delete(edges, to.Transaction.Shard()+"-"+to.id)
+	delete(edges, to.Transaction.Shard()+"-"+to.Id)
 	if len(edges) == 0 {
-		return n.Transaction.RemoveEdges(category, n.id)
+		return n.Transaction.RemoveEdges(category, n.Id)
 	}
-	return n.Transaction.SaveEdges(category, n.id, edges)
+	return n.Transaction.SaveEdges(category, n.Id, edges)
 }
 
 // GetEdge returns nil, if the edge could not be found, does not load the properties of the property edge
 func (n *Node) GetEdge(category string, to *Node) (*Edge, error) {
-	edges, err := n.Transaction.GetEdges(category, n.id)
+	edges, err := n.Transaction.GetEdges(category, n.Id)
 	if err != nil {
 		return nil, err
 	}
@@ -481,7 +483,7 @@ func (n *Node) GetEdge(category string, to *Node) (*Edge, error) {
 		return nil, nil
 	}
 
-	propID, has := edges[to.Transaction.Shard()+"-"+to.id]
+	propID, has := edges[to.Transaction.Shard()+"-"+to.Id]
 
 	if !has {
 		return nil, nil
@@ -498,7 +500,7 @@ func (n *Node) GetEdge(category string, to *Node) (*Edge, error) {
 // of the property node nor of the target node
 // the given target store determines from which store the edges are given
 func (n *Node) GetEdges(target Transaction, category string) ([]*Edge, error) {
-	edges, err := n.Transaction.GetEdges(category, n.id)
+	edges, err := n.Transaction.GetEdges(category, n.Id)
 	if err != nil {
 		return nil, err
 	}
